@@ -1,0 +1,22 @@
+[project]
+name = "xctl"
+version = "0.1.0"
+description = "Xray Controller CLI"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.12.0",
+    "rich>=14.2.0",
+    "typer>=0.21.0",
+]
+
+[project.scripts]
+xctl = "src.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
