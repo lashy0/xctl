@@ -80,6 +80,19 @@ class UserService:
         config = self.repo.load()
         inbound = self._find_vless_inbound(config)
         return inbound['settings']['clients']
+    
+    def get_user_link(self, email: str) -> str:
+        """Finds a user by email and regenerates their connection link."""
+        config = self.repo.load()
+        inbound = self._find_vless_inbound(config)
+        clients = inbound['settings']['clients']
+
+        user = next((c for c in clients if c.get('email') == email), None)
+
+        if not user:
+            raise ValueError(f"User '{email}' not found.")
+        
+        return self._generate_link(user['id'], email, inbound)
 
     def _find_vless_inbound(self, config: Dict) -> Dict:
         """Finds the VLESS Reality inbound in the configuration.

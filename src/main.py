@@ -73,15 +73,28 @@ def add_user(name: str = typer.Argument(..., help="Unique name/email for the use
             console.print(f"[bold red]System Error:[/]\n{e}")
             raise typer.Exit(code=1)
 
-    console.print(f"[bold green]User '{name}' successfully added![/]")
+    console.print(f"[bold green]User '{name}' successfully added![/]\n")
     
-    panel = Panel(
-        f"[yellow]{link}[/]",
-        title="VLESS Connection Link",
-        subtitle="Copy and paste into your client",
-        expand=False
-    )
-    console.print(panel)
+    console.print("[dim]VLESS Connection Link:[/]")
+    console.print(f"[yellow]{link}[/]\n")
+
+
+@app.command("link")
+def show_link(name: str = typer.Argument(..., help="Name of the user")):
+    """Retrieves the connection link for an existing user."""
+    service = get_service()
+
+    try:
+        link = service.get_user_link(name)
+    except ValueError as e:
+        console.print(f"[bold red]Error:[/]\n{e}")
+        raise typer.Exit(code=1)
+    except XrayError as e:
+        console.print(f"[bold red]System Error:[/]\n{e}")
+        raise typer.Exit(code=1)
+    
+    console.print(f"[dim]Link for user '{name}':[/]")
+    console.print(f"[yellow]{link}[/]")
 
 
 @app.command("remove")
