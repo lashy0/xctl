@@ -55,12 +55,6 @@ class Settings(BaseSettings):
                 "Public key must be exactly 43 or 44 characters."
             )
         
-        if len(v) == 43:
-            v += "="
-        
-        if not v.endswith("="):
-            raise ValueError("A 44-character key must end with '='.")
-        
         return v
     
     @field_validator("CONFIG_PATH")

@@ -1,4 +1,7 @@
 import secrets
+import json
+import urllib.request
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -21,6 +24,93 @@ def get_service():
     except Exception as e:
         console.print(f"[bold red]Critical Error during initialization:[/]\n{e}")
         raise typer.Exit(code=1)
+
+
+@app.command("init")
+def initialize_server(
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing configs")
+):
+    """Automatically setups Xray: detects IP, generates keys, creates configs."""
+    
+    config_path = Path("config/config.json")
+    env_path = Path(".env")
+    example_config_path = Path("config/config.example.json")
+
+    if (config_path.exists() or env_path.exists()) and not force:
+        console.print("[yellow]Configuration files already exist.[/]")
+        if not Confirm.ask("Do you want to overwrite them?"):
+            raise typer.Exit()
+
+    from .core.docker_controller import DockerController
+    docker = DockerController("xray-core")
+
+    with console.status("[bold blue]Detecting Server IP..."):
+        try:
+            with urllib.request.urlopen('https://api.ipify.org') as response:
+                server_ip = response.read().decode('utf-8')
+        except Exception:
+            console.print("[red]Failed to detect IP automatically.[/]")
+            server_ip = typer.prompt("Enter your Server IP manually")
+    
+    console.print(f"Server IP: [green]{server_ip}[/]")
+
+    with console.status("[bold blue]Generating X25519 Keys..."):
+        try:
+            priv_key, pub_key = docker.generate_x25519_keys()
+        except Exception as e:
+            console.print(f"[bold red]Failed to generate keys:[/]\n{e}")
+            raise typer.Exit(code=1)
+    
+    short_id = secrets.token_hex(4)
+
+    with console.status("[bold blue]Creating config.json..."):
+        if not example_config_path.exists():
+             console.print("[red]Error: config/config.example.json missing![/]")
+             raise typer.Exit(code=1)
+        
+        with open(example_config_path, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+        
+        try:
+            inbound = next(i for i in config_data['inbounds'] 
+                         if i['protocol'] == 'vless' and i['streamSettings']['security'] == 'reality')
+            
+            reality = inbound['streamSettings']['realitySettings']
+            reality['privateKey'] = priv_key
+            reality['shortIds'] = [short_id]
+            
+            reality['dest'] = "github.com:443"
+            reality['serverNames'] = ["github.com"]
+            
+        except (KeyError, StopIteration):
+            console.print("[red]Invalid example config format![/]")
+            raise typer.Exit(code=1)
+
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config_data, f, indent=2, ensure_ascii=False)
+
+    # 6. Создание .env
+    with console.status("[bold blue]Creating .env file..."):
+        env_content = (
+            f"SERVER_IP={server_ip}\n"
+            f"XRAY_PORT=443\n"
+            f"XRAY_PUB_KEY={pub_key}\n"
+        )
+        with open(env_path, 'w', encoding='utf-8') as f:
+            f.write(env_content)
+
+    console.print(Panel(
+        f"Private Key: [green]{priv_key}[/]\n"
+        f"Public Key:  [green]{pub_key}[/]\n"
+        f"Short ID:    [green]{short_id}[/]\n"
+        f"Server IP:   [green]{server_ip}[/]",
+        title="[bold green]Setup Completed Successfully![/]",
+        border_style="green"
+    ))
+    
+    console.print("\n[dim]Now run:[/]")
+    console.print("[bold cyan]docker compose up -d[/]")
+    console.print("[bold cyan]uv run xctl add <username>[/]")
 
 
 @app.command("list")
@@ -136,44 +226,6 @@ def restart_service():
             raise typer.Exit(code=1)
 
     console.print("[bold green]✔ Service restarted successfully.[/]")
-
-
-@app.command("gen-id")
-def generate_short_id(
-    length: int = typer.Option(4, help="Length in bytes (default 4 = 8 hex chars)")
-):
-    """Generates a secure ShortId for Reality configuration."""
-    sid = secrets.token_hex(length)
-    console.print(f"ShortId: [bold green]{sid}[/]")
-
-
-@app.command("gen-keys")
-def generate_keys():
-    """Generates new X25519 keys using the Xray container."""
-    from .core.docker_controller import DockerController
-
-    docker = DockerController("xray-core")
-    
-    with console.status("[bold blue]Generating keys via Xray..."):
-        try:
-            priv_key, pub_key = docker.generate_x25519_keys()
-        except XrayError as e:
-            console.print(f"[bold red]Error:[/]\n{e}")
-            console.print("[dim]Make sure Docker is installed and running.[/]")
-            raise typer.Exit(code=1)
-
-    console.print()
-    
-    grid = Table.grid(padding=(0, 2))
-    
-    grid.add_column(justify="right", style="dim")
-    grid.add_column(style="bold")
-
-    grid.add_row("Private Key:", f"[green]{priv_key}[/]")
-    grid.add_row("Public Key:",  f"[yellow]{pub_key}[/]")
-    
-    console.print(grid)
-    console.print()
 
 
 if __name__ == "__main__":
