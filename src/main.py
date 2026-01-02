@@ -79,8 +79,8 @@ def initialize_server(
             reality['privateKey'] = priv_key
             reality['shortIds'] = [short_id]
             
-            reality['dest'] = "github.com:443"
-            reality['serverNames'] = ["github.com"]
+            reality['dest'] = "web.max.ru:443"
+            reality['serverNames'] = ["web.max.ru"]
             
         except (KeyError, StopIteration):
             console.print("[red]Invalid example config format![/]")

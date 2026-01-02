@@ -1,4 +1,5 @@
 import uuid
+from urllib.parse import quote
 from typing import List, Dict
 
 from ..config.settings import settings
@@ -131,29 +132,29 @@ class UserService:
         stream = inbound['streamSettings']
         reality = stream['realitySettings']
         
-        sni = reality['serverNames'][0]
+        sni = reality['serverNames'][0] 
         sid = reality['shortIds'][0]
         fp = reality.get('fingerprint', 'chrome')
         spx = reality.get('spiderX', '')
-
+        
         server_ip = str(settings.SERVER_IP)
         pub_key = settings.XRAY_PUB_KEY
 
         link = (
             f"vless://{user_uuid}@{server_ip}:{port}"
             f"?security=reality"
-            f"&encryption=none"
-            f"&pbk={pub_key}"
-            f"&headerType=none"
+            f"&sni={sni}"
             f"&fp={fp}"
+            f"&pbk={quote(pub_key)}"
+            f"&sid={sid}"
             f"&type=tcp"
             f"&flow=xtls-rprx-vision"
-            f"&sni={sni}"
-            f"&sid={sid}"
+            f"&packetEncoding=xudp"
+            f"&encryption=none"
         )
 
         if spx:
             link += f"&spx={spx}"
-
+            
         link += f"#{email}"
         return link
