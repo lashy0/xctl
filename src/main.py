@@ -137,13 +137,16 @@ def generate_short_id(
 @app.command("gen-keys")
 def generate_keys():
     """Generates new X25519 keys using the Xray container."""
-    service = get_service()
+    from .core.docker_controller import DockerController
+
+    docker = DockerController("xray-core")
     
     with console.status("[bold blue]Generating keys via Xray..."):
         try:
-            priv_key, pub_key = service.docker.generate_x25519_keys()
+            priv_key, pub_key = docker.generate_x25519_keys()
         except XrayError as e:
             console.print(f"[bold red]Error:[/]\n{e}")
+            console.print("[dim]Make sure Docker is installed and running.[/]")
             raise typer.Exit(code=1)
 
     console.print()
