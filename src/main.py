@@ -1,3 +1,4 @@
+import os
 import secrets
 import json
 import urllib.request
@@ -10,19 +11,27 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 
 from .core.exceptions import XrayError
+from .dependencies import get_docker_client, get_user_service
 
 
 app = typer.Typer(help="CLI manager for Xray Reality proxy server.")
 console = Console()
 
-def get_service():
-    """Helper to initialize UserService and handle startup errors."""
-    from .services.user_service import UserService
-
+def resolve_service():
+    """Wrapper to handle initialization errors gracefully in CLI."""
     try:
-        return UserService()
+        return get_user_service()
     except Exception as e:
         console.print(f"[bold red]Critical Error during initialization:[/]\n{e}")
+        raise typer.Exit(code=1)
+
+
+def resolve_docker():
+    """Wrapper to handle Docker connection errors gracefully."""
+    try:
+        return get_docker_client()
+    except Exception as e:
+        console.print(f"[bold red]Docker Connection Error:[/]\n{e}")
         raise typer.Exit(code=1)
 
 
@@ -36,13 +45,26 @@ def initialize_server(
     env_path = Path(".env")
     example_config_path = Path("config/config.example.json")
 
+    logs_path = Path("logs")
+    logs_path.mkdir(exist_ok=True)
+
+    try:
+        os.chmod(logs_path, 0o777)
+        for file in logs_path.glob("*"):
+            try:
+                os.chmod(file, 0o666)
+            except Exception:
+                pass
+        console.print("[green]Logs directory permissions fixed (777).[/]")
+    except Exception as e:
+        console.print(f"[yellow]Warning: Could not set permissions for logs folder: {e}[/]")
+
     if (config_path.exists() or env_path.exists()) and not force:
         console.print("[yellow]Configuration files already exist.[/]")
         if not Confirm.ask("Do you want to overwrite them?"):
             raise typer.Exit()
-
-    from .core.docker_controller import DockerController
-    docker = DockerController("xray-core")
+    
+    docker = resolve_docker()
 
     with console.status("[bold blue]Detecting Server IP..."):
         try:
@@ -88,8 +110,7 @@ def initialize_server(
 
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
-
-    # 6. Создание .env
+    
     with console.status("[bold blue]Creating .env file..."):
         env_content = (
             f"SERVER_IP={server_ip}\n"
@@ -116,7 +137,7 @@ def initialize_server(
 @app.command("list")
 def list_users():
     """Displays a table of all registered users."""
-    service = get_service()
+    service = resolve_service()
     
     try:
         users = service.get_users()
@@ -151,7 +172,7 @@ def add_user(name: str = typer.Argument(..., help="Unique name/email for the use
 
     Automatically restarts the Xray container to apply changes.
     """
-    service = get_service()
+    service = resolve_service()
 
     with console.status(f"[bold green]Adding user '{name}' and restarting Xray..."):
         try:
@@ -172,7 +193,7 @@ def add_user(name: str = typer.Argument(..., help="Unique name/email for the use
 @app.command("link")
 def show_link(name: str = typer.Argument(..., help="Name of the user")):
     """Retrieves the connection link for an existing user."""
-    service = get_service()
+    service = resolve_service()
 
     try:
         link = service.get_user_link(name)
@@ -193,7 +214,7 @@ def remove_user(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt")
 ):
     """Deletes a user and restarts the service."""
-    service = get_service()
+    service = resolve_service()
 
     if not force:
         if not Confirm.ask(f"Are you sure you want to delete user [cyan]{name}[/]?"):
@@ -216,7 +237,7 @@ def remove_user(
 @app.command("restart")
 def restart_service():
     """Force restarts the Xray Docker container."""
-    service = get_service()
+    service = resolve_service()
 
     with console.status("[bold blue]Restarting Xray container..."):
         try:
@@ -225,7 +246,7 @@ def restart_service():
             console.print(f"[bold red]Failed to restart:[/]\n{e}")
             raise typer.Exit(code=1)
 
-    console.print("[bold green]✔ Service restarted successfully.[/]")
+    console.print("[bold green]Service restarted successfully.[/]")
 
 
 if __name__ == "__main__":

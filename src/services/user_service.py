@@ -11,10 +11,10 @@ from ..core.exceptions import XrayError
 class UserService:
     """Manages Xray users, configuration updates, and service restarts."""
 
-    def __init__(self):
+    def __init__(self, docker_controller: DockerController):
         """Initializes the service with repository and docker controller."""
         self.repo = ConfigRepository(settings.CONFIG_PATH)
-        self.docker = DockerController(settings.DOCKER_CONTAINER_NAME)
+        self.docker = docker_controller
 
     def add_user(self, email: str) -> str:
         """Adds a new user, restarts Xray, and returns the connection link.

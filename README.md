@@ -8,9 +8,10 @@ xctl/
 │   ├── config.json         # Actual Xray configuration
 │   └── config.example.json # Template for configuration
 ├── src/
-│   ├── config/             # Settings & Pydantic validation
+│   ├── config/             # Settings & validation
 │   ├── core/               # Low-level logic (JSON I/O, Docker ops)
 │   ├── services/           # Business logic (User management)
+│   ├── dependencies.py     # Dependency Injection
 │   └── main.py             # CLI Entry point
 ├── .env                    # Environment variables
 ├── docker-compose.yml      # Xray Docker service
@@ -45,46 +46,22 @@ Using `uv`:
 uv sync
 ```
 
-### 3. Prepare Configuration Files
+### 3. Initialize the Server
 
-Copy the example files to create your actual configuration:
+Run the initialization command. This will:
 
-```bash
-cp .env.example .env
-cp config/config.example.json config/config.json
-```
-
-### 4. Generate Keys and IDs
-
-You need to generate secrets for the server. You can use `xctl` to do this.
-
-Generate a ShortId:
+- Detect your public IP address.
+- Generate X25519 Private/Public keys.
+- Generate a secure ShortId.
+- Create .env and config/config.json.
 
 ```bash
-uv run xctl gen-id
+uv run xctl init
 ```
 
-Generate X25519 Keys:
+### 4. Start Xray
 
-```bash
-uv run xctl gen-keys
-```
-
-### 5. Fill Configuration
-
-Open the files and insert the generated values.
-
-1. Edit `config/config.json`:
-    - Paste Private Key into "privateKey".
-    - Paste ShortId into "shortIds".
-
-2. Edit `.env`:
-    - SERVER_IP: Set your server's public IP.
-    - XRAY_PUB_KEY: Paste the Public Key.
-
-### 6. Start the Server
-
-Start the Xray container using Docker Compose:
+Start the container using Docker Compose:
 
 ```bash
 docker compose up -d
@@ -96,11 +73,19 @@ docker compose up -d
 
 **Add a new user**:
 
+Creates a user, restarts the server, and returns a ready-to-use VLESS link.
+
 ```bash
 uv run xctl add <name>
 ```
 
-Returns a vless:// link.
+**Get an existing user`s link**:
+
+If you lost the link, you can retrieve it again without regenerating keys.
+
+```bash
+uv run xctl link <name>
+```
 
 **List all users**:
 
@@ -114,21 +99,19 @@ uv run xctl list
 uv run xctl remove <name>
 ```
 
-### Helper Commands
+### Server Management
 
-**Create a new ShortId**:
+**Initial/Reset Configuration**:
 
-```bash
-uv run xctl gen-id
-```
-
-**Generate new X25519 Keys**:
+Use the `--force` flag if you want to overwrite existing configs.
 
 ```bash
-uv run xctl gen-keys
+uv run xctl init --force
 ```
 
-**Force restart Xray**:
+**Restart Xray**:
+
+Force restarts the Docker container.
 
 ```bash
 uv run xctl restart

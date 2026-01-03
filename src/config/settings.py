@@ -80,24 +80,35 @@ class Settings(BaseSettings):
 try:
     settings = Settings()
 except ValidationError as e:
-    console = Console(stderr=True)
 
-    error_messages = []
-    for error in e.errors():
-        field_name = str(error['loc'][0])
-        msg = error['msg']
+    if "init" in sys.argv or "--help" in sys.argv:
+        class DummySettings:
+            SERVER_IP = "127.0.0.1"
+            XRAY_PORT = 443
+            XRAY_PUB_KEY = "dummy_key_for_init_process"
+            CONFIG_PATH = Path("./config/config.json")
+            DOCKER_CONTAINER_NAME = "xray-core"
+        
+        settings = DummySettings()
+    else:
+        console = Console(stderr=True)
 
-        error_messages.append(f"[bold yellow]• {field_name}[/]: {msg}")
-    
-    error_text = "\n".join(error_messages)
+        error_messages = []
+        for error in e.errors():
+            field_name = str(error['loc'][0])
+            msg = error['msg']
 
-    console.print(Panel(
-        error_text,
-        title="[bold red]Configuration Error (.env)[/]",
-        border_style="red",
-        padding=(1, 2)
-    ))
+            error_messages.append(f"[bold yellow]• {field_name}[/]: {msg}")
+        
+        error_text = "\n".join(error_messages)
 
-    console.print(f"\n[dim]Please check your configuration file at: [/][blue]{ENV_PATH}[/]\n")
+        console.print(Panel(
+            error_text,
+            title="[bold red]Configuration Error (.env)[/]",
+            border_style="red",
+            padding=(1, 2)
+        ))
 
-    sys.exit(1)
+        console.print(f"\n[dim]Please check your configuration file at: [/][blue]{ENV_PATH}[/]\n")
+
+        sys.exit(1)
