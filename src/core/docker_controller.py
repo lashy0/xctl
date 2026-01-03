@@ -90,3 +90,56 @@ class DockerController:
             return priv_match.group(1), pub_match.group(1)
 
         raise KeyGenerationError(f"Failed to parse output:\n{output}")
+    
+    def get_traffic_stats(self) -> dict:
+        """Queries Xray API for user traffic statistics.
+        
+        Returns:
+            Dict[email, {'up': bytes, 'down': bytes}]
+        """
+        container = self._get_container()
+        if not container or container.status != 'running':
+            raise DockerOperationError("Xray container is not running")
+
+        try:
+            cmd = "xray api statsquery --server=127.0.0.1:10085 --pattern ''"
+            result = container.exec_run(cmd)
+            
+            if result.exit_code != 0:
+                raise DockerOperationError(f"Failed to query stats: {result.output.decode()}")
+                
+            output = result.output.decode('utf-8')
+            return self._parse_stats(output)
+            
+        except Exception as e:
+            raise DockerOperationError(f"Error fetching stats: {e}")
+
+    def _parse_stats(self, output: str) -> dict:
+        """Parses the raw output from xray api statsquery."""
+        stats = {}
+        
+        for line in output.strip().split('\n'):
+            if ">>>traffic>>>" not in line:
+                continue
+                
+            parts = line.split(">>>")
+            if len(parts) < 4:
+                continue
+            
+            email = parts[1]
+            type_and_value = parts[3].split(":")
+            direction = type_and_value[0].strip()
+            try:
+                value = int(type_and_value[1].strip())
+            except ValueError:
+                value = 0
+
+            if email not in stats:
+                stats[email] = {'up': 0, 'down': 0}
+            
+            if direction == 'uplink':
+                stats[email]['up'] = value
+            elif direction == 'downlink':
+                stats[email]['down'] = value
+                
+        return stats

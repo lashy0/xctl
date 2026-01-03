@@ -1,4 +1,4 @@
-import os
+import time
 import secrets
 import json
 import urllib.request
@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.prompt import Confirm
+from rich.live import Live
 
 from .core.exceptions import XrayError
 from .dependencies import get_docker_client, get_user_service
@@ -35,6 +36,14 @@ def resolve_docker():
         raise typer.Exit(code=1)
 
 
+def sizeof_fmt(num, suffix="B"):
+    for unit in ("", "Ki", "Mi", "Gi", "Ti"):
+        if abs(num) < 1024.0:
+            return f"{num:3.1f}{unit}{suffix}"
+        num /= 1024.0
+    return f"{num:.1f}Pi{suffix}"
+
+
 @app.command("init")
 def initialize_server(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing configs")
@@ -47,17 +56,6 @@ def initialize_server(
 
     logs_path = Path("logs")
     logs_path.mkdir(exist_ok=True)
-
-    try:
-        os.chmod(logs_path, 0o777)
-        for file in logs_path.glob("*"):
-            try:
-                os.chmod(file, 0o666)
-            except Exception:
-                pass
-        console.print("[green]Logs directory permissions fixed (777).[/]")
-    except Exception as e:
-        console.print(f"[yellow]Warning: Could not set permissions for logs folder: {e}[/]")
 
     if (config_path.exists() or env_path.exists()) and not force:
         console.print("[yellow]Configuration files already exist.[/]")
@@ -247,6 +245,151 @@ def restart_service():
             raise typer.Exit(code=1)
 
     console.print("[bold green]Service restarted successfully.[/]")
+
+
+@app.command("watch")
+def watch_stats(
+    interval: float = typer.Option(2.0, help="Refresh interval in seconds")
+):
+    """Real-time dashboard showing traffic and current speed."""
+    service = resolve_service()
+    
+    prev_state = {}
+
+    def generate_table():
+        try:
+            users = service.get_users_with_stats()
+        except Exception:
+            return Panel("Error fetching stats...", style="red")
+
+        current_time = time.time()
+        
+        table = Table(title=f"Live Traffic Monitor (Refresh: {interval}s)", show_header=True)
+        table.add_column("User", style="cyan")
+        table.add_column("Total Up", style="blue", justify="right")
+        table.add_column("Total Down", style="green", justify="right")
+        table.add_column("Cur. Speed", style="bold white", justify="right")
+
+        for user in users:
+            email = user.get('email')
+            current_total = user.get('total', 0)
+
+            speed_str = "0.0 B/s"
+            if email in prev_state:
+                prev_total = prev_state[email]['total']
+                prev_time = prev_state[email]['time']
+                
+                delta_bytes = current_total - prev_total
+                delta_time = current_time - prev_time
+                
+                if delta_time > 0 and delta_bytes >= 0:
+                    speed = delta_bytes / delta_time
+                    speed_str = f"{sizeof_fmt(speed)}/s"
+
+                    if speed > 1024:
+                        speed_str = f"[bold green]{speed_str}[/]"
+            
+            prev_state[email] = {'total': current_total, 'time': current_time}
+
+            table.add_row(
+                email,
+                sizeof_fmt(user.get('traffic_up', 0)),
+                sizeof_fmt(user.get('traffic_down', 0)),
+                speed_str
+            )
+            
+        return table
+    
+    console.print("[dim]Press Ctrl+C to stop...[/]")
+    
+    try:
+        with Live(generate_table(), refresh_per_second=4) as live:
+            while True:
+                time.sleep(interval)
+                live.update(generate_table())
+    except KeyboardInterrupt:
+        console.print("[yellow]Stopped.[/]")
+
+
+@app.command("watch-user")
+def watch_single_user(
+    name: str = typer.Argument(..., help="Name of the user to monitor"),
+    interval: float = typer.Option(1.0, help="Refresh interval in seconds")
+):
+    """Real-time dashboard for a SINGLE user (Upload/Download speeds)."""
+    service = resolve_service()
+    
+    prev_state = None
+
+    def generate_view():
+        nonlocal prev_state
+        
+        try:
+            user_data = service.get_user_traffic(name)
+        except Exception as e:
+            return Panel(f"Error: {e}", style="red")
+
+        current_time = time.time()
+        curr_up = user_data['traffic_up']
+        curr_down = user_data['traffic_down']
+        
+        speed_up_str = "..."
+        speed_down_str = "..."
+        
+        if prev_state:
+            delta_time = current_time - prev_state['time']
+            delta_up = curr_up - prev_state['up']
+            delta_down = curr_down - prev_state['down']
+            
+            if delta_time > 0:
+                spd_up = delta_up / delta_time
+                spd_down = delta_down / delta_time
+                
+                speed_up_str = f"{sizeof_fmt(spd_up)}/s"
+                speed_down_str = f"{sizeof_fmt(spd_down)}/s"
+                
+                if spd_up > 1024: speed_up_str = f"[bold blue]{speed_up_str}[/]"
+                if spd_down > 1024: speed_down_str = f"[bold green]{speed_down_str}[/]"
+        
+        prev_state = {
+            'up': curr_up,
+            'down': curr_down,
+            'time': current_time
+        }
+        
+        grid = Table.grid(padding=(1, 4))
+        grid.add_column(justify="left", style="dim")
+        grid.add_column(justify="right", style="bold")
+        grid.add_column(justify="right", style="italic")
+
+        grid.add_row("Metric", "Total Volume", "Current Speed")
+        grid.add_row(
+            "[blue]Upload (↑)[/]", 
+            f"[blue]{sizeof_fmt(curr_up)}[/]", 
+            speed_up_str
+        )
+        grid.add_row(
+            "[green]Download (↓)[/]", 
+            f"[green]{sizeof_fmt(curr_down)}[/]", 
+            speed_down_str
+        )
+        
+        return Panel(
+            grid,
+            title=f"[bold]Live Monitor: [cyan]{name}[/][/]",
+            subtitle=f"[dim]UUID: {user_data['id']}[/]",
+            border_style="white"
+        )
+
+    console.print(f"[dim]Connecting to monitor user '{name}'... Press Ctrl+C to stop.[/]")
+    
+    try:
+        with Live(generate_view(), refresh_per_second=4) as live:
+            while True:
+                time.sleep(interval)
+                live.update(generate_view())
+    except KeyboardInterrupt:
+        console.print("[yellow]Stopped.[/]")
 
 
 if __name__ == "__main__":

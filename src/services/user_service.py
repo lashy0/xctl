@@ -158,3 +158,38 @@ class UserService:
             
         link += f"#{email}"
         return link
+    
+    def get_users_with_stats(self) -> Dict:
+        """Retrieves users and merges their traffic stats."""
+        config = self.repo.load()
+        inbound = self._find_vless_inbound(config)
+        users = inbound['settings']['clients']
+        
+        try:
+            stats = self.docker.get_traffic_stats()
+        except Exception:
+            stats = {}
+        
+        result = []
+        for user in users:
+            email = user.get('email')
+            user_stats = stats.get(email, {'up': 0, 'down': 0})
+            result.append({
+                **user,
+                'traffic_up': user_stats['up'],
+                'traffic_down': user_stats['down'],
+                'total': user_stats['up'] + user_stats['down']
+            })
+            
+        return result
+    
+    def get_user_traffic(self, email: str) -> Dict:
+        """Retrieves traffic statistics for a specific user."""
+        all_users = self.get_users_with_stats()
+        
+        target_user = next((u for u in all_users if u['email'] == email), None)
+        
+        if not target_user:
+            raise ValueError(f"User '{email}' not found.")
+            
+        return target_user
