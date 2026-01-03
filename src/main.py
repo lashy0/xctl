@@ -3,6 +3,8 @@ import secrets
 import json
 import urllib.request
 from pathlib import Path
+from collections import deque
+from importlib.metadata import version, PackageNotFoundError
 
 import typer
 from rich.console import Console
@@ -10,9 +12,10 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.live import Live
+from rich.prompt import Prompt
 
 from .core.exceptions import XrayError, DockerOperationError
-from .dependencies import get_docker_client, get_user_service
+from .dependencies import get_docker_client, get_user_service, get_system_service
 
 
 app = typer.Typer(help="CLI manager for Xray Reality proxy server.")
@@ -36,12 +39,45 @@ def resolve_docker():
         raise typer.Exit(code=1)
 
 
+def resolve_system_service():
+    try:
+        return get_system_service()
+    except Exception as e:
+        console.print(f"[bold red]System Service Error:[/]\n{e}")
+        raise typer.Exit(code=1)
+
+
 def sizeof_fmt(num, suffix="B"):
     for unit in ("", "Ki", "Mi", "Gi", "Ti"):
         if abs(num) < 1024.0:
             return f"{num:3.1f}{unit}{suffix}"
         num /= 1024.0
     return f"{num:.1f}Pi{suffix}"
+
+
+def version_callback(value: bool):
+    if value:
+        try:
+            v = version("xctl")
+        except PackageNotFoundError:
+            v = "unknown (dev)"
+        
+        console.print(f"xctl version: [bold cyan]{v}[/]")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        None, 
+        "--version", 
+        "-v", 
+        callback=version_callback, 
+        is_eager=True,
+        help="Show the application version and exit."
+    )
+):
+    return
 
 
 @app.command("init")
@@ -232,12 +268,11 @@ def user_stats(
 @app.command("add")
 def add_user(name: str = typer.Argument(..., help="Unique name/email for the user")):
     """Creates a new user and generates a connection link.
-
-    Automatically restarts the Xray container to apply changes.
+    Applies changes instantly (Hot Reload) without dropping connections.
     """
     service = resolve_service()
 
-    with console.status(f"[bold green]Adding user '{name}' and restarting Xray..."):
+    with console.status(f"[bold green]Adding user '{name}' and reloading config..."):
         try:
             link = service.add_user(name)
         except ValueError as e:
@@ -248,7 +283,6 @@ def add_user(name: str = typer.Argument(..., help="Unique name/email for the use
             raise typer.Exit(code=1)
 
     console.print(f"[bold green]User '{name}' successfully added![/]\n")
-    
     console.print("[dim]VLESS Connection Link:[/]")
     console.print(f"[yellow]{link}[/]\n")
 
@@ -276,7 +310,7 @@ def remove_user(
     name: str = typer.Argument(..., help="Name of the user to remove"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt")
 ):
-    """Deletes a user and restarts the service."""
+    """Deletes a user and reloads the service."""
     service = resolve_service()
 
     if not force:
@@ -284,7 +318,7 @@ def remove_user(
             console.print("[yellow]Operation cancelled.[/]")
             return
 
-    with console.status(f"[bold red]Removing user '{name}'..."):
+    with console.status(f"[bold red]Removing user '{name}' and reloading config..."):
         try:
             success = service.remove_user(name)
         except XrayError as e:
@@ -313,142 +347,63 @@ def restart_service():
 
 
 @app.command("watch")
-def watch_server(
+def watch_traffic(
+    name: str = typer.Argument(None, help="Name of the user. Omit to see global stats."),
     interval: float = typer.Option(1.0, help="Refresh interval in seconds")
 ):
-    """Real-time dashboard showing TOTAL server traffic and speed."""
+    """Real-time traffic monitor."""
     service = resolve_service()
-    prev_state = None
     
-    def generate_view():
-        nonlocal prev_state
-        
+    history = deque(maxlen=5)
+
+    def generate_view():        
         try:
-            users = service.get_users_with_stats()
+            if name:
+                data = service.get_user_traffic(name)
+                curr_up = data['traffic_up']
+                curr_down = data['traffic_down']
+                title = f"[bold cyan]{name}[/]"
+                subtitle_prefix = ""
+                border_style = "white"
+            else:
+                users = service.get_users_with_stats()
+                curr_up = sum(u.get('traffic_up', 0) for u in users)
+                curr_down = sum(u.get('traffic_down', 0) for u in users)
+                title = "[bold]Global Monitor[/]"
+                subtitle_prefix = f"Users: {len(users)} | "
+                border_style = "cyan"
+
         except Exception as e:
             return Panel(f"Error fetching stats: {e}", style="red")
         
-        total_up = sum(u.get('traffic_up', 0) for u in users)
-        total_down = sum(u.get('traffic_down', 0) for u in users)
-        active_users_count = len(users)
-        
         current_time = time.time()
-        
+        history.append((current_time, curr_up, curr_down))
+
         speed_up_str = "0.0 B/s"
         speed_down_str = "0.0 B/s"
-        
-        if prev_state:
-            delta_time = current_time - prev_state['time']
-            delta_up = total_up - prev_state['up']
-            delta_down = total_down - prev_state['down']
+
+        if len(history) > 1:
+            t_old, up_old, down_old = history[0]
+            t_new, up_new, down_new = history[-1]
+            
+            delta_time = t_new - t_old
             
             if delta_time > 0:
-                spd_up = delta_up / delta_time
-                spd_down = delta_down / delta_time
+                spd_up = (up_new - up_old) / delta_time
+                spd_down = (down_new - down_old) / delta_time
                 
                 speed_up_str = f"{sizeof_fmt(spd_up)}/s"
                 speed_down_str = f"{sizeof_fmt(spd_down)}/s"
                 
-                if spd_up > 1024 * 1024: speed_up_str = f"[bold blue]{speed_up_str}[/]"
-                if spd_down > 1024 * 1024: speed_down_str = f"[bold green]{speed_down_str}[/]"
-
-        prev_state = {
-            'up': total_up,
-            'down': total_down,
-            'time': current_time
-        }
-
-        grid = Table.grid(padding=(0, 2))
-        
-        grid.add_column(justify="left", style="bold")
-        grid.add_column(justify="right")
-        grid.add_column(justify="right")
-        
-        grid.add_row("", "[u dim]Total Volume[/]", "[u dim]Current Speed[/]")
-        
-        grid.add_row(
-            "[blue]Total Upload (↑)[/]", 
-            f"[blue]{sizeof_fmt(total_up)}[/]", 
-            speed_up_str
-        )
-        grid.add_row(
-            "[green]Total Download (↓)[/]", 
-            f"[green]{sizeof_fmt(total_down)}[/]", 
-            speed_down_str
-        )
-
-        return Panel(
-            grid,
-            title="[bold]Global Monitor[/]",
-            subtitle=f"[dim]Users: {active_users_count} | Refresh: {interval}s[/]",
-            border_style="cyan",
-            expand=False
-        )
-    
-    console.print(f"Global Monitor   [dim]Press [white]Ctrl+C[/] to stop[/]\n")
-
-    try:
-        with Live(generate_view(), refresh_per_second=4, transient=True) as live:
-            while True:
-                time.sleep(interval)
-                live.update(generate_view())
-    except KeyboardInterrupt:
-        console.print("[yellow]Stopped.[/]")
-
-
-@app.command("watch-user")
-def watch_single_user(
-    name: str = typer.Argument(..., help="Name of the user to monitor"),
-    interval: float = typer.Option(1.0, help="Refresh interval in seconds")
-):
-    """Real-time dashboard for a SINGLE user (Upload/Download speeds)."""
-    service = resolve_service()
-    
-    prev_state = None
-    
-    def generate_view():
-        nonlocal prev_state
-        
-        try:
-            user_data = service.get_user_traffic(name)
-        except Exception as e:
-            return Panel(f"Error: {e}", style="red")
-            
-        current_time = time.time()
-        curr_up = user_data['traffic_up']
-        curr_down = user_data['traffic_down']
-        
-        speed_up_str = "0.0 B/s"
-        speed_down_str = "0.0 B/s"
-        
-        if prev_state:
-            delta_time = current_time - prev_state['time']
-            delta_up = curr_up - prev_state['up']
-            delta_down = curr_down - prev_state['down']
-            
-            if delta_time > 0:
-                spd_up = delta_up / delta_time
-                spd_down = delta_down / delta_time
-                
-                speed_up_str = f"{sizeof_fmt(spd_up)}/s"
-                speed_down_str = f"{sizeof_fmt(spd_down)}/s"
-
                 if spd_up > 1024: speed_up_str = f"[bold blue]{speed_up_str}[/]"
                 if spd_down > 1024: speed_down_str = f"[bold green]{speed_down_str}[/]"
-        
-        prev_state = {
-            'up': curr_up,
-            'down': curr_down,
-            'time': current_time
-        }
-        
+
         grid = Table.grid(padding=(0, 2))
         grid.add_column(justify="left", style="bold")
         grid.add_column(justify="right")
         grid.add_column(justify="right")
         
         grid.add_row("", "[u dim]Total Volume[/]", "[u dim]Current Speed[/]")
-        
         grid.add_row(
             "[blue]Upload (↑)[/]", 
             f"[blue]{sizeof_fmt(curr_up)}[/]", 
@@ -459,19 +414,20 @@ def watch_single_user(
             f"[green]{sizeof_fmt(curr_down)}[/]", 
             speed_down_str
         )
-        
+
         return Panel(
             grid,
-            title=f"[bold cyan]{name}[/]",
-            subtitle=f"[dim]Refresh: {interval}s[/]",
-            border_style="white",
+            title=title,
+            subtitle=f"[dim]{subtitle_prefix}Refresh: {interval}s[/]",
+            border_style=border_style,
             expand=False
         )
-
-    console.print(f"Monitoring target: [bold cyan]{name}[/]   [dim]Press [white]Ctrl+C[/] to stop[/]\n")
+    
+    header_target = f"[bold cyan]{name}[/]" if name else "Global Server"
+    console.print(f"Monitoring: {header_target}   [dim]Press [white]Ctrl+C[/] to stop[/]\n")
     
     try:
-        with Live(generate_view(), refresh_per_second=10, transient=True) as live:
+        with Live(generate_view(), refresh_per_second=4, transient=True) as live:
             while True:
                 time.sleep(interval)
                 live.update(generate_view())
@@ -503,6 +459,55 @@ def start_service():
             console.print(f"[red]Error:[/]\n{e}")
             raise typer.Exit(code=1)
     console.print("[bold green]Service started.[/]")
+
+
+@app.command("restore")
+def restore_configuration(
+    latest: bool = typer.Option(False, "--latest", help="Automatically restore the most recent backup without prompting")
+):
+    """Restores configuration from a backup file."""
+    service = resolve_system_service()
+    
+    backups = service.get_backups()
+
+    if not backups:
+        console.print("[yellow]No backups found in config/backups/[/]")
+        raise typer.Exit()
+
+    if latest:
+        target = backups[0]
+    else:
+        table = Table(title="Available Backups", show_header=True, header_style="bold magenta")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Date (UTC)", style="cyan")
+        table.add_column("Filename", style="green")
+
+        for idx, backup in enumerate(backups, 1):
+            table.add_row(str(idx), backup['date'], backup['name'])
+        
+        console.print(table)
+        
+        choice = Prompt.ask(
+            "Select backup number to restore", 
+            choices=[str(i) for i in range(1, len(backups) + 1)],
+            default="1"
+        )
+        target = backups[int(choice) - 1]
+
+    console.print(f"\nSelected: [bold cyan]{target['name']}[/]")
+    
+    if not latest and not Confirm.ask("Are you sure you want to overwrite current config?"):
+        console.print("[yellow]Operation cancelled.[/]")
+        raise typer.Exit()
+
+    with console.status("[bold blue]Restoring configuration and restarting Xray..."):
+        try:
+            service.restore_backup(target['path'])
+        except Exception as e:
+            console.print(f"[bold red]Restore Failed:[/]\n{e}")
+            raise typer.Exit(code=1)
+
+    console.print(f"[bold green]Successfully restored backup from {target['date']}![/]")
 
 
 if __name__ == "__main__":

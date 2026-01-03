@@ -1,20 +1,22 @@
 # xctl - Xray Controller
 
+**xctl** is a CLI for deploying and managing **Xray Reality** proxy servers with Docker.
+
 ## Project Structure
 
 ```
 xctl/
 ├── config/
-│   ├── config.json         # Actual Xray configuration
-│   └── config.example.json # Template for configuration
+│   ├── config.json          # Actual Xray configuration
+│   └── config.template.json # Template for configuration
 ├── src/
-│   ├── config/             # Settings & Validation
-│   ├── core/               # Low-level logic (JSON I/O, Docker ops)
-│   ├── services/           # Business logic (User management)
-│   ├── dependencies.py     # Dependency Injection container
-│   └── main.py             # CLI Entry point
-├── .env                    # Environment variables
-├── docker-compose.yml      # Xray Docker service
+│   ├── config/              # Settings & Validation
+│   ├── core/                # Low-level logic
+│   ├── services/            # Business logic
+│   ├── dependencies.py      # Dependency Injection container
+│   └── main.py              # CLI Entry point
+├── .env                     # Environment variables
+├── docker-compose.yml       # Xray Docker service
 ├── pyproject.toml
 └── README.md
 ```
@@ -122,7 +124,7 @@ uv run xctl watch
 Focus on one user to see separate Upload and Download speeds in real-time.
 
 ```bash
-uv run xctl watch-user <name>
+uv run xctl watch <name>
 ```
 
 ### Server Management
@@ -152,4 +154,12 @@ Control the Docker container directly.
 
 ```bash
 uv run xctl stop/start
+```
+
+**Restore Configuration**:
+
+Rollback to a previous configuration if something goes wrong.
+
+```bash
+uv run xctl restore
 ```

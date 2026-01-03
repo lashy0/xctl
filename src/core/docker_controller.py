@@ -42,6 +42,17 @@ class DockerController:
             container.restart()
         except APIError as e:
             raise DockerOperationError(f"Failed to restart container: {e}")
+    
+    def reload_config(self) -> None:
+        """Sends SIGHUP to Xray container to hot-reload configuration."""
+        container = self._get_container()
+        if not container or container.status != 'running':
+            raise DockerOperationError("Container is not running. Cannot reload config.")
+        
+        try:
+            container.kill(signal="SIGHUP")
+        except APIError as e:
+            raise DockerOperationError(f"Failed to reload configuration: {e}")
 
     def is_running(self) -> bool:
         """Checks if the container is currently running.

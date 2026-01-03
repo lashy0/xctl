@@ -29,23 +29,22 @@ class UserService:
             ValueError: If a user with the same email already exists.
             XrayError: If configuration parsing or docker operations fail.
         """
-        config = self.repo.load()
-        inbound = self._find_vless_inbound(config)
-        clients = inbound['settings']['clients']
+        with self.repo.atomic_write() as config:
+            inbound = self._find_vless_inbound(config)
+            clients = inbound['settings']['clients']
 
-        if any(c.get('email') == email for c in clients):
-            raise ValueError(f"User '{email}' already exists.")
+            if any(c.get('email') == email for c in clients):
+                raise ValueError(f"User '{email}' already exists.")
+            
+            new_uuid = str(uuid.uuid4())
+            new_client = {
+                "id": new_uuid,
+                "flow": "xtls-rprx-vision",
+                "email": email
+            }
+            clients.append(new_client)
         
-        new_uuid = str(uuid.uuid4())
-        new_client = {
-            "id": new_uuid,
-            "flow": "xtls-rprx-vision",
-            "email": email
-        }
-        clients.append(new_client)
-
-        self.repo.save(config)
-        self.docker.restart()
+        self.docker.reload_config()
 
         return self._generate_link(new_uuid, email, inbound)
 
@@ -58,16 +57,20 @@ class UserService:
         Returns:
             True if the user was removed, False if not found.
         """
-        config = self.repo.load()
-        inbound = self._find_vless_inbound(config)
-        clients = inbound['settings']['clients']
+        user_removed = False
 
-        initial_count = len(clients)
-        inbound['settings']['clients'] = [c for c in clients if c.get('email') != email]
+        with self.repo.atomic_write() as config:
+            inbound = self._find_vless_inbound(config)
+            clients = inbound['settings']['clients']
 
-        if len(inbound['settings']['clients']) < initial_count:
-            self.repo.save(config)
-            self.docker.restart()
+            initial_count = len(clients)
+            inbound['settings']['clients'] = [c for c in clients if c.get('email') != email]
+
+            if len(inbound['settings']['clients']) < initial_count:
+                user_removed = True
+        
+        if user_removed:
+            self.docker.reload_config()
             return True
         
         return False
