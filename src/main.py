@@ -165,49 +165,66 @@ def list_users():
 
 
 @app.command("stats")
-def user_stats(name: str = typer.Argument(..., help="Name of the user")):
-    """Shows traffic usage for a specific user (Snapshot)."""
+def user_stats(
+    name: str = typer.Argument(None, help="Name of the user. Omit to see global stats.")
+):
+    """Shows traffic usage snapshot. Specify a name for user stats, or leave empty for server totals."""
     service = resolve_service()
+
     try:
-        user_data = service.get_user_traffic(name)
+        if name:
+            data = service.get_user_traffic(name)
+            up = data['traffic_up']
+            down = data['traffic_down']
+            total = data['total']
+            
+            title = f"[bold cyan]{name}[/]"
+            subtitle = f"[dim]UUID: {data['id']}[/]"
+            border_color = "white"
+        else:
+            users = service.get_users_with_stats()
+            up = sum(u.get('traffic_up', 0) for u in users)
+            down = sum(u.get('traffic_down', 0) for u in users)
+            total = up + down
+            
+            title = "[bold]Global Server Stats[/]"
+            subtitle = f"[dim]Active Users: {len(users)}[/]"
+            border_color = "cyan"
+
     except ValueError as e:
         console.print(f"[bold red]Error:[/]\n{e}")
         raise typer.Exit(code=1)
     except XrayError as e:
         console.print(f"[bold red]System Error:[/]\n{e}")
         raise typer.Exit(code=1)
-
-    curr_up = user_data['traffic_up']
-    curr_down = user_data['traffic_down']
-    curr_total = user_data['total']
-
+    
     grid = Table.grid(padding=(0, 2))
     grid.add_column(justify="left", style="bold")
     grid.add_column(justify="right")
 
     grid.add_row("", "[u dim]Total Volume[/]")
-
+    
     grid.add_row(
         "[blue]Upload (↑)[/]", 
-        f"[blue]{sizeof_fmt(curr_up)}[/]"
+        f"[blue]{sizeof_fmt(up)}[/]"
     )
     grid.add_row(
         "[green]Download (↓)[/]", 
-        f"[green]{sizeof_fmt(curr_down)}[/]"
+        f"[green]{sizeof_fmt(down)}[/]"
     )
     
     grid.add_row("", "")
     
     grid.add_row(
         "[white]Total (∑)[/]", 
-        f"[bold white]{sizeof_fmt(curr_total)}[/]"
+        f"[bold white]{sizeof_fmt(total)}[/]"
     )
 
     console.print(Panel(
         grid,
-        title=f"[bold cyan]{name}[/]",
-        subtitle="[dim]Traffic Snapshot[/]",
-        border_style="white",
+        title=title,
+        subtitle=subtitle,
+        border_style=border_color,
         expand=False
     ))
 
