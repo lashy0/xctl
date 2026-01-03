@@ -12,6 +12,8 @@ services:
     environment:
       - TZ=UTC
       - XRAY_LOCATION_ASSET=/usr/local/share/xray/
+    
+    command: run -c /etc/xray/config.json
 
     logging:
       driver: "json-file"

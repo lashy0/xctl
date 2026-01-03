@@ -83,7 +83,7 @@ def initialize_server(
             console.print(f"[bold red]Failed to generate keys:[/]\n{e}")
             raise typer.Exit(code=1)
     
-    short_id = secrets.token_hex(4)
+    short_id = secrets.token_hex(8)
 
     with console.status("[bold blue]Creating config.json..."):
         if not example_config_path.exists():
