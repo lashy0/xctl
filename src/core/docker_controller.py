@@ -1,4 +1,5 @@
 import re
+import json
 from typing import Tuple
 
 import docker
@@ -117,30 +118,27 @@ class DockerController:
     def _parse_stats(self, output: str) -> dict:
         """Parses the raw output from xray api statsquery."""
         stats = {}
-        
-        for line in output.strip().split('\n'):
-            if ">>>traffic>>>" not in line:
-                continue
-                
-            parts = line.split(">>>")
-            if len(parts) < 4:
-                continue
-            
-            email = parts[1]
-            type_and_value = parts[3].split(":")
-            direction = type_and_value[0].strip()
-            try:
-                value = int(type_and_value[1].strip())
-            except ValueError:
-                value = 0
 
-            if email not in stats:
-                stats[email] = {'up': 0, 'down': 0}
+        data = json.loads(output)
+        
+        for entry in data.get("stat", []):
+            name = entry.get("name", "")
+            value = entry.get("value", 0)
             
-            if direction == 'uplink':
-                stats[email]['up'] = value
-            elif direction == 'downlink':
-                stats[email]['down'] = value
+            if "user>>>" in name and ">>>traffic>>>" in name:
+                parts = name.split(">>>")
+                
+                if len(parts) >= 4:
+                    email = parts[1]
+                    direction = parts[3]
+                    
+                    if email not in stats:
+                        stats[email] = {'up': 0, 'down': 0}
+                    
+                    if direction == 'uplink':
+                        stats[email]['up'] = int(value)
+                    elif direction == 'downlink':
+                        stats[email]['down'] = int(value)
                 
         return stats
     
