@@ -143,3 +143,23 @@ class DockerController:
                 stats[email]['down'] = value
                 
         return stats
+    
+    def stop(self) -> None:
+        """Stops the container."""
+        container = self._get_container()
+        if container and container.status == 'running':
+            try:
+                container.stop()
+            except APIError as e:
+                raise DockerOperationError(f"Failed to stop container: {e}")
+
+    def start(self) -> None:
+        """Starts the container."""
+        container = self._get_container()
+        if container:
+            try:
+                container.start()
+            except APIError as e:
+                raise DockerOperationError(f"Failed to start container: {e}")
+        else:
+            raise DockerOperationError("Container not found. Run 'docker compose up -d' first.")

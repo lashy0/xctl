@@ -8,14 +8,14 @@ xctl/
 │   ├── config.json         # Actual Xray configuration
 │   └── config.example.json # Template for configuration
 ├── src/
-│   ├── config/             # Settings & validation
+│   ├── config/             # Settings & Validation
 │   ├── core/               # Low-level logic (JSON I/O, Docker ops)
 │   ├── services/           # Business logic (User management)
-│   ├── dependencies.py     # Dependency Injection
+│   ├── dependencies.py     # Dependency Injection container
 │   └── main.py             # CLI Entry point
 ├── .env                    # Environment variables
 ├── docker-compose.yml      # Xray Docker service
-├── pyproject.toml          # Dependencies
+├── pyproject.toml
 └── README.md
 ```
 
@@ -99,9 +99,38 @@ uv run xctl list
 uv run xctl remove <name>
 ```
 
+### Traffic Monitoring
+
+**Detailed stats for a user**:
+
+Shows total upload/download bytes for a specific user.
+
+```bash
+uv run xctl stats <name>
+```
+
+**Live Dashboard (All Users)**:
+
+Shows current internet speed and total traffic for all users in real-time.
+
+```bash
+uv run xctl watch
+```
+
+**Live Monitor (Single User)**:
+
+Focus on one user to see separate Upload and Download speeds in real-time.
+
+```bash
+uv run xctl watch-user <name>
+```
+
 ### Server Management
 
 **Initial/Reset Configuration**:
+
+> [!WARNING]
+> This will overwrite your existing configuration and users.
 
 Use the `--force` flag if you want to overwrite existing configs.
 
@@ -115,4 +144,12 @@ Force restarts the Docker container.
 
 ```bash
 uv run xctl restart
+```
+
+**Stop/Start Xray**:
+
+Control the Docker container directly.
+
+```bash
+uv run xctl stop/start
 ```

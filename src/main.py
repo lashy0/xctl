@@ -11,7 +11,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.live import Live
 
-from .core.exceptions import XrayError
+from .core.exceptions import XrayError, DockerOperationError
 from .dependencies import get_docker_client, get_user_service
 
 
@@ -162,6 +162,54 @@ def list_users():
         )
 
     console.print(table)
+
+
+@app.command("stats")
+def user_stats(name: str = typer.Argument(..., help="Name of the user")):
+    """Shows traffic usage for a specific user (Snapshot)."""
+    service = resolve_service()
+    
+    try:
+        user_data = service.get_user_traffic(name)
+    except ValueError as e:
+        console.print(f"[bold red]Error:[/]\n{e}")
+        raise typer.Exit(code=1)
+    except XrayError as e:
+        console.print(f"[bold red]System Error:[/]\n{e}")
+        raise typer.Exit(code=1)
+    
+    curr_up = user_data['traffic_up']
+    curr_down = user_data['traffic_down']
+    curr_total = user_data['total']
+
+    grid = Table.grid(padding=(1, 4))
+    grid.add_column(justify="left", style="dim")
+    grid.add_column(justify="right", style="bold")
+
+    grid.add_row("Metric", "Volume")
+    
+    grid.add_row(
+        "[blue]Upload (↑)[/]", 
+        f"[blue]{sizeof_fmt(curr_up)}[/]"
+    )
+    grid.add_row(
+        "[green]Download (↓)[/]", 
+        f"[green]{sizeof_fmt(curr_down)}[/]"
+    )
+    
+    grid.add_row("", "") 
+    grid.add_row(
+        "[white]Total (∑)[/]", 
+        f"[white]{sizeof_fmt(curr_total)}[/]"
+    )
+
+    console.print(Panel(
+        grid,
+        title=f"[bold]Traffic Snapshot: [cyan]{name}[/][/]",
+        subtitle=f"[dim]UUID: {user_data['id']}[/]",
+        border_style="white",
+        expand=False
+    ))
 
 
 @app.command("add")
@@ -390,6 +438,32 @@ def watch_single_user(
                 live.update(generate_view())
     except KeyboardInterrupt:
         console.print("[yellow]Stopped.[/]")
+
+
+@app.command("stop")
+def stop_service():
+    """Stops the Xray Docker container."""
+    docker = resolve_docker()
+    with console.status("[bold red]Stopping Xray server..."):
+        try:
+            docker.stop()
+        except DockerOperationError as e:
+            console.print(f"[red]Error:[/]\n{e}")
+            raise typer.Exit(code=1)
+    console.print("[bold red]Service stopped.[/]")
+
+
+@app.command("start")
+def start_service():
+    """Starts the Xray Docker container."""
+    docker = resolve_docker()
+    with console.status("[bold green]Starting Xray server..."):
+        try:
+            docker.start()
+        except DockerOperationError as e:
+            console.print(f"[red]Error:[/]\n{e}")
+            raise typer.Exit(code=1)
+    console.print("[bold green]Service started.[/]")
 
 
 if __name__ == "__main__":
