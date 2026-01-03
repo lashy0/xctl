@@ -52,7 +52,7 @@ def initialize_server(
     
     config_path = Path("config/config.json")
     env_path = Path(".env")
-    example_config_path = Path("config/config.example.json")
+    example_config_path = Path("config/config.template.json")
 
     logs_path = Path("logs")
     logs_path.mkdir(exist_ok=True)
@@ -168,7 +168,6 @@ def list_users():
 def user_stats(name: str = typer.Argument(..., help="Name of the user")):
     """Shows traffic usage for a specific user (Snapshot)."""
     service = resolve_service()
-    
     try:
         user_data = service.get_user_traffic(name)
     except ValueError as e:
@@ -177,17 +176,17 @@ def user_stats(name: str = typer.Argument(..., help="Name of the user")):
     except XrayError as e:
         console.print(f"[bold red]System Error:[/]\n{e}")
         raise typer.Exit(code=1)
-    
+
     curr_up = user_data['traffic_up']
     curr_down = user_data['traffic_down']
     curr_total = user_data['total']
 
-    grid = Table.grid(padding=(1, 4))
-    grid.add_column(justify="left", style="dim")
-    grid.add_column(justify="right", style="bold")
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(justify="left", style="bold")
+    grid.add_column(justify="right")
 
-    grid.add_row("Metric", "Volume")
-    
+    grid.add_row("", "[u dim]Total Volume[/]")
+
     grid.add_row(
         "[blue]Upload (↑)[/]", 
         f"[blue]{sizeof_fmt(curr_up)}[/]"
@@ -197,16 +196,17 @@ def user_stats(name: str = typer.Argument(..., help="Name of the user")):
         f"[green]{sizeof_fmt(curr_down)}[/]"
     )
     
-    grid.add_row("", "") 
+    grid.add_row("", "")
+    
     grid.add_row(
         "[white]Total (∑)[/]", 
-        f"[white]{sizeof_fmt(curr_total)}[/]"
+        f"[bold white]{sizeof_fmt(curr_total)}[/]"
     )
 
     console.print(Panel(
         grid,
-        title=f"[bold]Traffic Snapshot: [cyan]{name}[/][/]",
-        subtitle=f"[dim]UUID: {user_data['id']}[/]",
+        title=f"[bold cyan]{name}[/]",
+        subtitle="[dim]Traffic Snapshot[/]",
         border_style="white",
         expand=False
     ))
@@ -296,65 +296,85 @@ def restart_service():
 
 
 @app.command("watch")
-def watch_stats(
-    interval: float = typer.Option(2.0, help="Refresh interval in seconds")
+def watch_server(
+    interval: float = typer.Option(1.0, help="Refresh interval in seconds")
 ):
-    """Real-time dashboard showing traffic and current speed."""
+    """Real-time dashboard showing TOTAL server traffic and speed."""
     service = resolve_service()
+    prev_state = None
     
-    prev_state = {}
-
-    def generate_table():
+    def generate_view():
+        nonlocal prev_state
+        
         try:
             users = service.get_users_with_stats()
-        except Exception:
-            return Panel("Error fetching stats...", style="red")
-
+        except Exception as e:
+            return Panel(f"Error fetching stats: {e}", style="red")
+        
+        total_up = sum(u.get('traffic_up', 0) for u in users)
+        total_down = sum(u.get('traffic_down', 0) for u in users)
+        active_users_count = len(users)
+        
         current_time = time.time()
         
-        table = Table(title=f"Live Traffic Monitor (Refresh: {interval}s)", show_header=True)
-        table.add_column("User", style="cyan")
-        table.add_column("Total Up", style="blue", justify="right")
-        table.add_column("Total Down", style="green", justify="right")
-        table.add_column("Cur. Speed", style="bold white", justify="right")
-
-        for user in users:
-            email = user.get('email')
-            current_total = user.get('total', 0)
-
-            speed_str = "0.0 B/s"
-            if email in prev_state:
-                prev_total = prev_state[email]['total']
-                prev_time = prev_state[email]['time']
-                
-                delta_bytes = current_total - prev_total
-                delta_time = current_time - prev_time
-                
-                if delta_time > 0 and delta_bytes >= 0:
-                    speed = delta_bytes / delta_time
-                    speed_str = f"{sizeof_fmt(speed)}/s"
-
-                    if speed > 1024:
-                        speed_str = f"[bold green]{speed_str}[/]"
+        speed_up_str = "0.0 B/s"
+        speed_down_str = "0.0 B/s"
+        
+        if prev_state:
+            delta_time = current_time - prev_state['time']
+            delta_up = total_up - prev_state['up']
+            delta_down = total_down - prev_state['down']
             
-            prev_state[email] = {'total': current_total, 'time': current_time}
+            if delta_time > 0:
+                spd_up = delta_up / delta_time
+                spd_down = delta_down / delta_time
+                
+                speed_up_str = f"{sizeof_fmt(spd_up)}/s"
+                speed_down_str = f"{sizeof_fmt(spd_down)}/s"
+                
+                if spd_up > 1024 * 1024: speed_up_str = f"[bold blue]{speed_up_str}[/]"
+                if spd_down > 1024 * 1024: speed_down_str = f"[bold green]{speed_down_str}[/]"
 
-            table.add_row(
-                email,
-                sizeof_fmt(user.get('traffic_up', 0)),
-                sizeof_fmt(user.get('traffic_down', 0)),
-                speed_str
-            )
-            
-        return table
+        prev_state = {
+            'up': total_up,
+            'down': total_down,
+            'time': current_time
+        }
+
+        grid = Table.grid(padding=(0, 2))
+        
+        grid.add_column(justify="left", style="bold")
+        grid.add_column(justify="right")
+        grid.add_column(justify="right")
+        
+        grid.add_row("", "[u dim]Total Volume[/]", "[u dim]Current Speed[/]")
+        
+        grid.add_row(
+            "[blue]Total Upload (↑)[/]", 
+            f"[blue]{sizeof_fmt(total_up)}[/]", 
+            speed_up_str
+        )
+        grid.add_row(
+            "[green]Total Download (↓)[/]", 
+            f"[green]{sizeof_fmt(total_down)}[/]", 
+            speed_down_str
+        )
+
+        return Panel(
+            grid,
+            title="[bold]Global Monitor[/]",
+            subtitle=f"[dim]Users: {active_users_count} | Refresh: {interval}s[/]",
+            border_style="cyan",
+            expand=False
+        )
     
-    console.print("[dim]Press Ctrl+C to stop...[/]")
-    
+    console.print(f"Global Monitor   [dim]Press [white]Ctrl+C[/] to stop[/]\n")
+
     try:
-        with Live(generate_table(), refresh_per_second=4) as live:
+        with Live(generate_view(), refresh_per_second=4, transient=True) as live:
             while True:
                 time.sleep(interval)
-                live.update(generate_table())
+                live.update(generate_view())
     except KeyboardInterrupt:
         console.print("[yellow]Stopped.[/]")
 
@@ -368,7 +388,7 @@ def watch_single_user(
     service = resolve_service()
     
     prev_state = None
-
+    
     def generate_view():
         nonlocal prev_state
         
@@ -376,13 +396,13 @@ def watch_single_user(
             user_data = service.get_user_traffic(name)
         except Exception as e:
             return Panel(f"Error: {e}", style="red")
-
+            
         current_time = time.time()
         curr_up = user_data['traffic_up']
         curr_down = user_data['traffic_down']
         
-        speed_up_str = "..."
-        speed_down_str = "..."
+        speed_up_str = "0.0 B/s"
+        speed_down_str = "0.0 B/s"
         
         if prev_state:
             delta_time = current_time - prev_state['time']
@@ -395,7 +415,7 @@ def watch_single_user(
                 
                 speed_up_str = f"{sizeof_fmt(spd_up)}/s"
                 speed_down_str = f"{sizeof_fmt(spd_down)}/s"
-                
+
                 if spd_up > 1024: speed_up_str = f"[bold blue]{speed_up_str}[/]"
                 if spd_down > 1024: speed_down_str = f"[bold green]{speed_down_str}[/]"
         
@@ -405,12 +425,13 @@ def watch_single_user(
             'time': current_time
         }
         
-        grid = Table.grid(padding=(1, 4))
-        grid.add_column(justify="left", style="dim")
-        grid.add_column(justify="right", style="bold")
-        grid.add_column(justify="right", style="italic")
-
-        grid.add_row("Metric", "Total Volume", "Current Speed")
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column(justify="left", style="bold")
+        grid.add_column(justify="right")
+        grid.add_column(justify="right")
+        
+        grid.add_row("", "[u dim]Total Volume[/]", "[u dim]Current Speed[/]")
+        
         grid.add_row(
             "[blue]Upload (↑)[/]", 
             f"[blue]{sizeof_fmt(curr_up)}[/]", 
@@ -424,15 +445,16 @@ def watch_single_user(
         
         return Panel(
             grid,
-            title=f"[bold]Live Monitor: [cyan]{name}[/][/]",
-            subtitle=f"[dim]UUID: {user_data['id']}[/]",
-            border_style="white"
+            title=f"[bold cyan]{name}[/]",
+            subtitle=f"[dim]Refresh: {interval}s[/]",
+            border_style="white",
+            expand=False
         )
 
-    console.print(f"[dim]Connecting to monitor user '{name}'... Press Ctrl+C to stop.[/]")
+    console.print(f"Monitoring target: [bold cyan]{name}[/]   [dim]Press [white]Ctrl+C[/] to stop[/]\n")
     
     try:
-        with Live(generate_view(), refresh_per_second=4) as live:
+        with Live(generate_view(), refresh_per_second=10, transient=True) as live:
             while True:
                 time.sleep(interval)
                 live.update(generate_view())
