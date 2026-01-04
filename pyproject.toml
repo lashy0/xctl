@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-xctl = "src.main:app"
+xctl = "src.cli.main:app"
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]

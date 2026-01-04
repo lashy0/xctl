@@ -1,5 +1,5 @@
+import sys
 import json
-import fcntl
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -7,6 +7,11 @@ from typing import Dict, Any, Generator, List
 from contextlib import contextmanager
 
 from .exceptions import ConfigNotFoundError, JsonDecodeError
+
+if sys.platform != 'win32':
+    import fcntl
+else:
+    fcntl = None
 
 
 class ConfigRepository:
@@ -78,15 +83,19 @@ class ConfigRepository:
         """Context manager for safe read-modify-write operations.
         Acquires an exclusive lock before reading and releases it after saving.
         """
+        if sys.platform == 'win32' or fcntl is None:
+            self._create_backup()
+            config = self.load()
+            yield config
+            self.save(config)
+            return
+        
         with open(self.lock_path, 'w') as lockfile:
             fcntl.flock(lockfile, fcntl.LOCK_EX)
             try:
                 self._create_backup()
-
                 config = self.load()
-                
                 yield config
-                
                 self.save(config)
             finally:
                 fcntl.flock(lockfile, fcntl.LOCK_UN)

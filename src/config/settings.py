@@ -81,7 +81,7 @@ try:
     settings = Settings()
 except ValidationError as e:
 
-    if "init" in sys.argv or "--help" in sys.argv:
+    if any(cmd in sys.argv for cmd in ["init", "--help", "-v", "--version"]):
         class DummySettings:
             SERVER_IP = "127.0.0.1"
             XRAY_PORT = 443
