@@ -47,12 +47,43 @@ def resolve_system_service():
         raise typer.Exit(code=1)
 
 
-def sizeof_fmt(num, suffix="B"):
+def sizeof_fmt(num: float, suffix: str = "B") -> str:
+    """Converts a byte count into a human-readable string using binary prefixes.
+
+     Args:
+        num: The size in bytes to convert.
+        suffix: The suffix to append to the unit. Defaults to "B".
+
+    Returns:
+        str: A formatted string (e.g., '12.5 MiB', '1.0 GiB').
+    """
     for unit in ("", "Ki", "Mi", "Gi", "Ti"):
         if abs(num) < 1024.0:
-            return f"{num:3.1f}{unit}{suffix}"
+            return f"{num:3.1f} {unit}{suffix}"
         num /= 1024.0
-    return f"{num:.1f}Pi{suffix}"
+    return f"{num:.1f} Pi{suffix}"
+
+
+def generate_sparkline(data: list[float], width: int = 40) -> str:
+    """Generates a text-based sparkline chart using block characters."""
+    if not data:
+        return " " * width
+    
+    bar_chars = "  ▂▃▄▅▆▇█"
+    
+    recent_data = list(data)[-width:]
+    
+    if len(recent_data) < width:
+        recent_data = [0.0] * (width - len(recent_data)) + recent_data
+        
+    max_val = max(recent_data) or 1
+    
+    result = ""
+    for val in recent_data:
+        idx = int((val / max_val) * (len(bar_chars) - 1))
+        result += bar_chars[idx]
+        
+    return result
 
 
 def version_callback(value: bool):
@@ -82,7 +113,8 @@ def main(
 
 @app.command("init")
 def initialize_server(
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing configs")
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing configs"),
+    domain: str = typer.Option(None, "--domain", "-d", help="Masking domain (SNI) for Reality")
 ):
     """Automatically setups Xray: detects IP, generates keys, creates configs."""
     
@@ -110,6 +142,13 @@ def initialize_server(
     
     console.print(f"Server IP: [green]{server_ip}[/]")
 
+    if not domain:
+        default_domain = "web.max.ru"
+        domain = typer.prompt("Enter masking domain (SNI)", default=default_domain)
+    
+    domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
+    console.print(f"Masking Domain: [green]{domain}[/]")
+
     with console.status("[bold blue]Generating X25519 Keys..."):
         try:
             priv_key, pub_key = docker.generate_x25519_keys()
@@ -135,8 +174,8 @@ def initialize_server(
             reality['privateKey'] = priv_key
             reality['shortIds'] = [short_id]
             
-            reality['dest'] = "web.max.ru:443"
-            reality['serverNames'] = ["web.max.ru"]
+            reality['dest'] = f"{domain}:443"
+            reality['serverNames'] = [domain]
             
         except (KeyError, StopIteration):
             console.print("[red]Invalid example config format![/]")
@@ -159,13 +198,14 @@ def initialize_server(
         f"Public Key:  [green]{pub_key}[/]\n"
         f"Short ID:    [green]{short_id}[/]\n"
         f"Server IP:   [green]{server_ip}[/]",
+        f"SNI Domain:  [green]{domain}[/]",
         title="[bold green]Setup Completed Successfully![/]",
         border_style="green"
     ))
     
-    console.print("\n[dim]Now run:[/]")
+    console.print("\n[dim]Next step:[/]")
     console.print("[bold cyan]docker compose up -d[/]")
-    console.print("[bold cyan]uv run xctl add <username>[/]")
+    console.print("[bold cyan]uv run xctl add <username>[/]\n")
 
 
 @app.command("list")
@@ -204,7 +244,7 @@ def list_users():
 def user_stats(
     name: str = typer.Argument(None, help="Name of the user. Omit to see global stats.")
 ):
-    """Shows traffic usage snapshot. Specify a name for user stats, or leave empty for server totals."""
+    """Shows traffic usage snapshot."""
     service = resolve_service()
 
     try:
@@ -267,9 +307,7 @@ def user_stats(
 
 @app.command("add")
 def add_user(name: str = typer.Argument(..., help="Unique name/email for the user")):
-    """Creates a new user and generates a connection link.
-    Applies changes instantly (Hot Reload) without dropping connections.
-    """
+    """Creates a new user and generates a connection link."""
     service = resolve_service()
 
     with console.status(f"[bold green]Adding user '{name}' and reloading config..."):
@@ -353,22 +391,39 @@ def watch_traffic(
 ):
     """Real-time traffic monitor."""
     service = resolve_service()
-    
-    history = deque(maxlen=5)
 
-    def generate_view():        
+    history_len = 60
+    
+    history_up = deque(maxlen=history_len)
+    history_down = deque(maxlen=history_len)
+    last_snapshot = None
+
+    total_seconds = int(history_len * interval)
+    if total_seconds < 60:
+        time_label = f"{total_seconds}s"
+    else:
+        minutes = round(total_seconds / 60, 1)
+        if minutes.is_integer():
+            minutes = int(minutes)
+        time_label = f"{minutes}m"
+    
+    chart_header = f"[u dim]Activity ({time_label})[/]"
+
+    def generate_view():
+        nonlocal last_snapshot
+
         try:
             if name:
                 data = service.get_user_traffic(name)
-                curr_up = data['traffic_up']
-                curr_down = data['traffic_down']
+                curr_up_total = data['traffic_up']
+                curr_down_total = data['traffic_down']
                 title = f"[bold cyan]{name}[/]"
                 subtitle_prefix = ""
                 border_style = "white"
             else:
                 users = service.get_users_with_stats()
-                curr_up = sum(u.get('traffic_up', 0) for u in users)
-                curr_down = sum(u.get('traffic_down', 0) for u in users)
+                curr_up_total = sum(u.get('traffic_up', 0) for u in users)
+                curr_down_total = sum(u.get('traffic_down', 0) for u in users)
                 title = "[bold]Global Monitor[/]"
                 subtitle_prefix = f"Users: {len(users)} | "
                 border_style = "cyan"
@@ -377,42 +432,46 @@ def watch_traffic(
             return Panel(f"Error fetching stats: {e}", style="red")
         
         current_time = time.time()
-        history.append((current_time, curr_up, curr_down))
 
-        speed_up_str = "0.0 B/s"
-        speed_down_str = "0.0 B/s"
+        speed_up = 0.0
+        speed_down = 0.0
 
-        if len(history) > 1:
-            t_old, up_old, down_old = history[0]
-            t_new, up_new, down_new = history[-1]
-            
-            delta_time = t_new - t_old
-            
+        if last_snapshot:
+            t_old, up_old, down_old = last_snapshot
+            delta_time = current_time - t_old
             if delta_time > 0:
-                spd_up = (up_new - up_old) / delta_time
-                spd_down = (down_new - down_old) / delta_time
-                
-                speed_up_str = f"{sizeof_fmt(spd_up)}/s"
-                speed_down_str = f"{sizeof_fmt(spd_down)}/s"
-                
-                if spd_up > 1024: speed_up_str = f"[bold blue]{speed_up_str}[/]"
-                if spd_down > 1024: speed_down_str = f"[bold green]{speed_down_str}[/]"
+                speed_up = (curr_up_total - up_old) / delta_time
+                speed_down = (curr_down_total - down_old) / delta_time
+        
+        last_snapshot = (current_time, curr_up_total, curr_down_total)
+
+        history_up.append(speed_up)
+        history_down.append(speed_down)
+
+        speed_up_str = f"{sizeof_fmt(speed_up)}/s"
+        speed_down_str = f"{sizeof_fmt(speed_down)}/s"
+
+        chart_up = generate_sparkline(history_up, width=history_len)
+        chart_down = generate_sparkline(history_down, width=history_len)
 
         grid = Table.grid(padding=(0, 2))
         grid.add_column(justify="left", style="bold")
         grid.add_column(justify="right")
         grid.add_column(justify="right")
+        grid.add_column(justify="left", style="dim")
         
-        grid.add_row("", "[u dim]Total Volume[/]", "[u dim]Current Speed[/]")
+        grid.add_row("", "[u dim]Total Volume[/]", "[u dim]Current Speed[/]", chart_header)
         grid.add_row(
             "[blue]Upload (↑)[/]", 
-            f"[blue]{sizeof_fmt(curr_up)}[/]", 
-            speed_up_str
+            f"[blue]{sizeof_fmt(curr_up_total)}[/]", 
+            f"[bold blue]{speed_up_str}[/]",
+            f"[blue]{chart_up}[/]"
         )
         grid.add_row(
             "[green]Download (↓)[/]", 
-            f"[green]{sizeof_fmt(curr_down)}[/]", 
-            speed_down_str
+            f"[green]{sizeof_fmt(curr_down_total)}[/]", 
+            f"[bold green]{speed_down_str}[/]",
+            f"[green]{chart_down}[/]"
         )
 
         return Panel(
@@ -427,7 +486,7 @@ def watch_traffic(
     console.print(f"Monitoring: {header_target}   [dim]Press [white]Ctrl+C[/] to stop[/]\n")
     
     try:
-        with Live(generate_view(), refresh_per_second=4, transient=True) as live:
+        with Live(generate_view(), refresh_per_second=1/interval, transient=True) as live:
             while True:
                 time.sleep(interval)
                 live.update(generate_view())
