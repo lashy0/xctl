@@ -82,7 +82,7 @@ def watch_traffic(
     """Real-time traffic monitor."""
     service = resolve_service()
 
-    history_len = 60
+    history_len = 30
     
     history_up = deque(maxlen=history_len)
     history_down = deque(maxlen=history_len)
@@ -145,10 +145,10 @@ def watch_traffic(
         chart_down = generate_sparkline(history_down, width=history_len)
 
         grid = Table.grid(padding=(0, 2))
-        grid.add_column(justify="left", style="bold")
-        grid.add_column(justify="right")
-        grid.add_column(justify="right")
-        grid.add_column(justify="left", style="dim")
+        grid.add_column(justify="left", no_wrap=True)
+        grid.add_column(justify="right", no_wrap=True)
+        grid.add_column(justify="right", no_wrap=True)
+        grid.add_column(justify="left", no_wrap=True)
         
         grid.add_row("", "[u dim]Total Volume[/]", "[u dim]Current Speed[/]", chart_header)
         grid.add_row(
