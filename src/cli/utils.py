@@ -56,17 +56,23 @@ def generate_sparkline(data: list[float], width: int = 40) -> str:
         return " " * width
     
     bar_chars = "  ▂▃▄▅▆▇█"
-    
     recent_data = list(data)[-width:]
     
     if len(recent_data) < width:
         recent_data = [0.0] * (width - len(recent_data)) + recent_data
-        
-    max_val = max(recent_data) or 1
     
+    max_val = max(recent_data)
+    if max_val < 10240: 
+        max_val = 10240
+
     result = ""
     for val in recent_data:
-        idx = int((val / max_val) * (len(bar_chars) - 1))
+        if val == 0:
+            idx = 0
+        else:
+            idx = int((val / max_val) * (len(bar_chars) - 1))
+            idx = max(0, min(idx, len(bar_chars) - 1))
+            
         result += bar_chars[idx]
         
     return result

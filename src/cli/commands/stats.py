@@ -145,18 +145,23 @@ def watch_traffic(
         chart_down = generate_sparkline(history_down, width=history_len)
 
         grid = Table.grid(padding=(0, 2))
+
         grid.add_column(justify="left", no_wrap=True)
-        grid.add_column(justify="right", no_wrap=True)
-        grid.add_column(justify="right", no_wrap=True)
+        grid.add_column(justify="right", no_wrap=True, min_width=12) 
+        grid.add_column(justify="right", no_wrap=True, min_width=12) 
         grid.add_column(justify="left", no_wrap=True)
         
         grid.add_row("", "[u dim]Total Volume[/]", "[u dim]Current Speed[/]", chart_header)
+
         grid.add_row(
             "[blue]Upload (↑)[/]", 
             f"[blue]{sizeof_fmt(curr_up_total)}[/]", 
             f"[bold blue]{speed_up_str}[/]",
             f"[blue]{chart_up}[/]"
         )
+
+        grid.add_row("", "", "", "") 
+
         grid.add_row(
             "[green]Download (↓)[/]", 
             f"[green]{sizeof_fmt(curr_down_total)}[/]", 
