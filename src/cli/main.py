@@ -3,7 +3,7 @@ from importlib.metadata import version, PackageNotFoundError
 import typer
 
 from .utils import console
-from .commands import users, system, stats
+from .commands import users, system, stats, tools
 
 
 app = typer.Typer(help="CLI manager for Xray Reality proxy server.")
@@ -21,6 +21,8 @@ app.command("restore")(system.restore_configuration)
 
 app.command("stats")(stats.user_stats)
 app.command("watch")(stats.watch_traffic)
+
+app.command("check")(tools.check_domain)
 
 def version_callback(value: bool):
     if value:

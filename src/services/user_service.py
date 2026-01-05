@@ -2,7 +2,7 @@ import uuid
 from urllib.parse import quote
 from typing import List, Dict
 
-from ..config.settings import settings
+from ..config.settings import Settings
 from ..core.config_repository import ConfigRepository
 from ..core.docker_controller import DockerController
 from ..core.exceptions import XrayError
@@ -11,9 +11,10 @@ from ..core.exceptions import XrayError
 class UserService:
     """Manages Xray users, configuration updates, and service restarts."""
 
-    def __init__(self, docker_controller: DockerController):
+    def __init__(self, docker_controller: DockerController, settings: Settings):
         """Initializes the service with repository and docker controller."""
-        self.repo = ConfigRepository(settings.CONFIG_PATH)
+        self.settings = settings
+        self.repo = ConfigRepository(self.settings.CONFIG_PATH)
         self.docker = docker_controller
 
     def add_user(self, email: str) -> str:
@@ -140,8 +141,8 @@ class UserService:
         fp = reality.get('fingerprint', 'chrome')
         spx = reality.get('spiderX', '')
         
-        server_ip = str(settings.SERVER_IP)
-        pub_key = settings.XRAY_PUB_KEY
+        server_ip = str(self.settings.SERVER_IP)
+        pub_key = self.settings.XRAY_PUB_KEY
 
         link = (
             f"vless://{user_uuid}@{server_ip}:{port}"

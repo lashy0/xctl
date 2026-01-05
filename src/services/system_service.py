@@ -1,7 +1,7 @@
 from typing import List, Dict
 from pathlib import Path
 
-from ..config.settings import settings
+from ..config.settings import Settings
 from ..core.config_repository import ConfigRepository
 from ..core.docker_controller import DockerController
 
@@ -9,8 +9,9 @@ from ..core.docker_controller import DockerController
 class SystemService:
     """Manages system-level operations: backups, restoration, server control."""
 
-    def __init__(self, docker_controller: DockerController):
-        self.repo = ConfigRepository(settings.CONFIG_PATH)
+    def __init__(self, docker_controller: DockerController, settings: Settings):
+        self.settings = settings
+        self.repo = ConfigRepository(self.settings.CONFIG_PATH)
         self.docker = docker_controller
 
     def get_backups(self) -> List[Dict[str, str]]:

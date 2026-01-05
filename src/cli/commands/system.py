@@ -9,6 +9,7 @@ from rich.prompt import Confirm, Prompt
 from rich.panel import Panel
 
 from ...core.exceptions import XrayError, DockerOperationError
+from ...core.verifier import RealityVerifier
 from ..utils import resolve_service, resolve_docker, resolve_system_service, console
 
 
@@ -42,11 +43,40 @@ def initialize_server(
     
     console.print(f"Server IP: [green]{server_ip}[/]")
 
-    if not domain:
+    if domain:
+        console.print(f"Verifying provided SNI: [cyan]{domain}[/]")
+        clean_domain = RealityVerifier.extract_hostname(domain)
+        is_valid, msg = RealityVerifier.verify(clean_domain, forbidden_ip=server_ip)
+
+        if not is_valid:
+            console.print(f"[bold yellow]Warning:[/ {msg}")
+            if not Confirm.ask("Do you want to proceed with this domain anyway?"):
+                raise typer.Exit(code=1)
+        else:
+            console.print(f"[green]{msg}[/]")
+            
+        domain = clean_domain
+    else:
         default_domain = "web.max.ru"
-        domain = typer.prompt("Enter masking domain (SNI)", default=default_domain)
+        while True:
+            user_input = typer.prompt("Enter masking domain (SNI)", default=default_domain)
+            clean_domain = RealityVerifier.extract_hostname(user_input)
+            
+            with console.status(f"[bold blue]Probing {clean_domain}..."):
+                is_valid, msg = RealityVerifier.verify(clean_domain, forbidden_ip=server_ip)
+            
+            if is_valid:
+                console.print(f"[green]{msg}[/]")
+                domain = clean_domain
+                break
+            else:
+                console.print(f"[bold red]Domain issue: {msg}[/]")
+                console.print("[dim]A good domain must resolve, support TLS 1.3/H2, and not be this server.[/]")
+                
+                if Confirm.ask("Use this domain anyway (not recommended)?"):
+                    domain = clean_domain
+                    break
     
-    domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
     console.print(f"Masking Domain: [green]{domain}[/]")
 
     with console.status("[bold blue]Generating X25519 Keys..."):
