@@ -9,19 +9,21 @@ from rich.prompt import Confirm, Prompt
 from rich.panel import Panel
 
 from ...core.exceptions import XrayError, DockerOperationError
-from ...core.verifier import RealityVerifier
+from ...core.verifier import DomainVerifier
+from ...core.protocol_factory import get_handler
 from ..utils import resolve_service, resolve_docker, resolve_system_service, console
 
 
 def initialize_server(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing configs"),
-    domain: str = typer.Option(None, "--domain", "-d", help="Masking domain (SNI) for Reality")
+    domain: str = typer.Option(None, "--domain", "-d", help="Masking domain (SNI) for Reality"),
+    protocol: str = typer.Option("vless-reality", "--protocol", "-p", help="Xray protocol to use")
 ):
-    """Automatically setups Xray: detects IP, generates keys, creates configs."""
+    """Automatically setups Xray with the selected protocol."""
     
     config_path = Path("config/config.json")
     env_path = Path(".env")
-    example_config_path = Path("config/config.template.json")
+    template_path = Path(f"config/templates/config.{protocol}.json")
 
     logs_path = Path("logs")
     logs_path.mkdir(exist_ok=True)
@@ -31,8 +33,14 @@ def initialize_server(
         if not Confirm.ask("Do you want to overwrite them?"):
             raise typer.Exit()
     
+    if not template_path.exists():
+        console.print(f"[bold red]Error:[/ Template for protocol '{protocol}' not found!")
+        console.print(f"Expected file at: [blue]{template_path}[/]")
+        raise typer.Exit(code=1)
+    
     docker = resolve_docker()
 
+    server_ip = ""
     with console.status("[bold blue]Detecting Server IP..."):
         try:
             with urllib.request.urlopen('https://api.ipify.org') as response:
@@ -43,93 +51,82 @@ def initialize_server(
     
     console.print(f"Server IP: [green]{server_ip}[/]")
 
-    if domain:
-        console.print(f"Verifying provided SNI: [cyan]{domain}[/]")
-        clean_domain = RealityVerifier.extract_hostname(domain)
-        is_valid, msg = RealityVerifier.verify(clean_domain, forbidden_ip=server_ip)
+    handler = get_handler(protocol)
 
-        if not is_valid:
-            console.print(f"[bold yellow]Warning:[/ {msg}")
-            if not Confirm.ask("Do you want to proceed with this domain anyway?"):
-                raise typer.Exit(code=1)
-        else:
-            console.print(f"[green]{msg}[/]")
-            
-        domain = clean_domain
-    else:
-        default_domain = "web.max.ru"
-        while True:
-            user_input = typer.prompt("Enter masking domain (SNI)", default=default_domain)
-            clean_domain = RealityVerifier.extract_hostname(user_input)
-            
-            with console.status(f"[bold blue]Probing {clean_domain}..."):
-                is_valid, msg = RealityVerifier.verify(clean_domain, forbidden_ip=server_ip)
-            
-            if is_valid:
-                console.print(f"[green]{msg}[/]")
-                domain = clean_domain
-                break
+    final_domain = None
+    if handler.requires_domain:
+        if domain:
+            console.print(f"Verifying provided SNI: [cyan]{domain}[/]")
+            clean_domain = DomainVerifier.extract_hostname(domain)
+            is_valid, msg = DomainVerifier.verify(clean_domain, forbidden_ip=server_ip)
+
+            if not is_valid:
+                console.print(f"[bold yellow]Warning:[/ {msg}")
+                if not Confirm.ask("Do you want to proceed with this domain anyway?"):
+                    raise typer.Exit(code=1)
             else:
-                console.print(f"[bold red]Domain issue: {msg}[/]")
-                console.print("[dim]A good domain must resolve, support TLS 1.3/H2, and not be this server.[/]")
+                console.print(f"[green]{msg}[/]")
                 
-                if Confirm.ask("Use this domain anyway (not recommended)?"):
-                    domain = clean_domain
+            final_domain = clean_domain
+        else:
+            default_domain = "web.max.ru"
+            while True:
+                user_input = typer.prompt("Enter masking domain (SNI)", default=default_domain)
+                clean_domain = DomainVerifier.extract_hostname(user_input)
+                
+                with console.status(f"[bold blue]Probing {clean_domain}..."):
+                    is_valid, msg = DomainVerifier.verify(clean_domain, forbidden_ip=server_ip)
+                
+                if is_valid:
+                    console.print(f"[green]{msg}[/]")
+                    final_domain = clean_domain
                     break
-    
-    console.print(f"Masking Domain: [green]{domain}[/]")
-
-    with console.status("[bold blue]Generating X25519 Keys..."):
-        try:
-            priv_key, pub_key = docker.generate_x25519_keys()
-        except Exception as e:
-            console.print(f"[bold red]Failed to generate keys:[/]\n{e}")
-            raise typer.Exit(code=1)
-    
-    short_id = secrets.token_hex(8)
-
-    with console.status("[bold blue]Creating config.json..."):
-        if not example_config_path.exists():
-             console.print("[red]Error: config/config.example.json missing![/]")
-             raise typer.Exit(code=1)
+                else:
+                    console.print(f"[bold red]Domain issue: {msg}[/]")
+                    console.print("[dim]A good domain must resolve, support TLS 1.3/H2, and not be this server.[/]")
+                    
+                    if Confirm.ask("Use this domain anyway (not recommended)?"):
+                        final_domain = clean_domain
+                        break
         
-        with open(example_config_path, 'r', encoding='utf-8') as f:
+        console.print(f"Masking Domain: [green]{final_domain}[/]")
+
+    with console.status(f"[bold blue]Configuring {handler.name}..."):
+        with open(template_path, 'r', encoding='utf-8') as f:
             config_data = json.load(f)
         
         try:
-            inbound = next(i for i in config_data['inbounds'] 
-                         if i['protocol'] == 'vless' and i['streamSettings']['security'] == 'reality')
+            env_vars = handler.on_initialize(
+                config=config_data,
+                docker=docker,
+                domain=final_domain
+            )
             
-            reality = inbound['streamSettings']['realitySettings']
-            reality['privateKey'] = priv_key
-            reality['shortIds'] = [short_id]
-            
-            reality['dest'] = f"{domain}:443"
-            reality['serverNames'] = [domain]
-            
-        except (KeyError, StopIteration):
-            console.print("[red]Invalid example config format![/]")
+        except Exception as e:
+            console.print(f"[bold red]Protocol setup failed:[/]\n{e}")
             raise typer.Exit(code=1)
 
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
     
     with console.status("[bold blue]Creating .env file..."):
-        env_content = (
-            f"SERVER_IP={server_ip}\n"
-            f"XRAY_PORT=443\n"
-            f"XRAY_PUB_KEY={pub_key}\n"
-        )
+        env_content = [
+            f"SERVER_IP={server_ip}",
+            "XRAY_PORT=443",
+            f"XRAY_PROTOCOL={protocol}"
+        ]
+
+        for key, value in env_vars.items():
+            env_content.append(f"{key}={value}")
+        
         with open(env_path, 'w', encoding='utf-8') as f:
-            f.write(env_content)
+            f.write("\n".join(env_content) + "\n")
 
     console.print(Panel(
-        f"Private Key: [green]{priv_key}[/]\n"
-        f"Public Key:  [green]{pub_key}[/]\n"
-        f"Short ID:    [green]{short_id}[/]\n"
-        f"Server IP:   [green]{server_ip}[/]",
-        f"SNI Domain:  [green]{domain}[/]",
-        title="[bold green]Setup Completed Successfully![/]",
+        f"Protocol:  [magenta]{protocol}[/]\n"
+        f"Server IP: [green]{server_ip}[/]\n" +
+        ("\n".join([f"{k}: [green]{v}[/]" for k, v in env_vars.items()])),
+        title="[bold green]Setup Completed![/]",
         border_style="green"
     ))
     

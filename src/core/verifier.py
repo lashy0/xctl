@@ -4,11 +4,11 @@ from typing import Tuple, Optional
 from urllib.parse import urlparse
 
 
-class RealityVerifier:
-    """Verifies if a remote domain is suitable for Xray Reality masking.
+class DomainVerifier:
+    """Verifies if a remote domain is suitable for Xray masking (SNI).
 
-    This class performs active network probing to ensure the target domain
-    supports TLS 1.3/1.2, HTTP/2 (h2), and is accessible from the current server.
+    Checks for DNS resolution, TLS 1.3/1.2 support, and HTTP/2 (h2) ALPN.
+    Useful for Reality, VLESS-TLS, Trojan, etc.
     """
     @staticmethod
     def extract_hostname(url_or_domain: str) -> str:
@@ -46,7 +46,7 @@ class RealityVerifier:
                 - bool: True if the domain is valid for Reality.
                 - str: A description message (success details or failure reason).
         """
-        hostname = RealityVerifier.extract_hostname(domain)
+        hostname = DomainVerifier.extract_hostname(domain)
         
         try:
             target_ip = socket.gethostbyname(hostname)

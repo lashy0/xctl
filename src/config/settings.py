@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     SERVER_IP: IPv4Address
     XRAY_PORT: int = Field(default=453, ge=1, le=65535)
     XRAY_PUB_KEY: str
+    XRAY_PROTOCOL: str = "vless-reality"
     CONFIG_PATH: Path = Path("config/config.json")
     DOCKER_CONTAINER_NAME: str = DEFAULT_CONTAINER_NAME
 

@@ -1,7 +1,7 @@
 import typer
 from rich.panel import Panel
 from ..utils import console
-from ...core.verifier import RealityVerifier
+from ...core.verifier import DomainVerifier
 
 
 def check_domain(
@@ -10,7 +10,7 @@ def check_domain(
     """Inspects a domain for compatibility with Xray Reality (TLS/H2 check)."""
     
     with console.status(f"[bold blue]Inspecting {domain}..."):
-        is_valid, message = RealityVerifier.verify(domain)
+        is_valid, message = DomainVerifier.verify(domain)
 
     if is_valid:
         console.print(Panel(

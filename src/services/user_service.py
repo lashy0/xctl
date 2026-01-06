@@ -1,11 +1,11 @@
 import uuid
-from urllib.parse import quote
 from typing import List, Dict
 
 from ..config.settings import Settings
 from ..core.config_repository import ConfigRepository
 from ..core.docker_controller import DockerController
 from ..core.exceptions import XrayError
+from ..core.protocol_factory import get_handler
 
 
 class UserService:
@@ -16,6 +16,7 @@ class UserService:
         self.settings = settings
         self.repo = ConfigRepository(self.settings.CONFIG_PATH)
         self.docker = docker_controller
+        self.handler = get_handler(self.settings.XRAY_PROTOCOL)
 
     def add_user(self, email: str) -> str:
         """Adds a new user, restarts Xray, and returns the connection link.
@@ -31,23 +32,26 @@ class UserService:
             XrayError: If configuration parsing or docker operations fail.
         """
         with self.repo.atomic_write() as config:
-            inbound = self._find_vless_inbound(config)
+            inbound = self.handler.find_inbound(config)
             clients = inbound['settings']['clients']
 
             if any(c.get('email') == email for c in clients):
                 raise ValueError(f"User '{email}' already exists.")
             
             new_uuid = str(uuid.uuid4())
-            new_client = {
-                "id": new_uuid,
-                "flow": "xtls-rprx-vision",
-                "email": email
-            }
+
+            new_client = self.handler.create_client(email, new_uuid)
             clients.append(new_client)
         
         self.docker.reload_config()
 
-        return self._generate_link(new_uuid, email, inbound)
+        return self.handler.generate_link(
+            inbound=inbound,
+            user_id=new_uuid,
+            email=email,
+            host=str(self.settings.SERVER_IP),
+            pub_key=self.settings.XRAY_PUB_KEY
+        )
 
     def remove_user(self, email: str) -> bool:
         """Removes a user by email and restarts Xray.
@@ -61,7 +65,7 @@ class UserService:
         user_removed = False
 
         with self.repo.atomic_write() as config:
-            inbound = self._find_vless_inbound(config)
+            inbound = self.handler.find_inbound(config)
             clients = inbound['settings']['clients']
 
             initial_count = len(clients)
@@ -83,13 +87,13 @@ class UserService:
             A list of dictionaries with user details (email, id, flow).
         """
         config = self.repo.load()
-        inbound = self._find_vless_inbound(config)
+        inbound = self.handler.find_inbound(config)
         return inbound['settings']['clients']
     
     def get_user_link(self, email: str) -> str:
         """Finds a user by email and regenerates their connection link."""
         config = self.repo.load()
-        inbound = self._find_vless_inbound(config)
+        inbound = self.handler.find_inbound(config)
         clients = inbound['settings']['clients']
 
         user = next((c for c in clients if c.get('email') == email), None)
@@ -97,76 +101,18 @@ class UserService:
         if not user:
             raise ValueError(f"User '{email}' not found.")
         
-        return self._generate_link(user['id'], email, inbound)
-
-    def _find_vless_inbound(self, config: Dict) -> Dict:
-        """Finds the VLESS Reality inbound in the configuration.
-
-        Args:
-            config: The full configuration dictionary.
-
-        Returns:
-            The inbound dictionary object (by reference).
-
-        Raises:
-            XrayError: If no VLESS Reality inbound is found.
-        """
-        inbounds = config.get('inbounds', [])
-        for inbound in inbounds:
-            protocol = inbound.get('protocol')
-            security = inbound.get('streamSettings', {}).get('security')
-            
-            if protocol == 'vless' and security == 'reality':
-                return inbound
-        
-        raise XrayError("No VLESS+Reality inbound found in config.json")
-
-    def _generate_link(self, user_uuid: str, email: str, inbound: Dict) -> str:
-        """Constructs the VLESS connection string.
-
-        Args:
-            user_uuid: The user's UUID.
-            email: The user's email (alias).
-            inbound: The inbound configuration dictionary.
-
-        Returns:
-            A formatted vless:// URL.
-        """
-        port = inbound['port']
-        stream = inbound['streamSettings']
-        reality = stream['realitySettings']
-        
-        sni = reality['serverNames'][0] 
-        sid = reality['shortIds'][0]
-        fp = reality.get('fingerprint', 'chrome')
-        spx = reality.get('spiderX', '')
-        
-        server_ip = str(self.settings.SERVER_IP)
-        pub_key = self.settings.XRAY_PUB_KEY
-
-        link = (
-            f"vless://{user_uuid}@{server_ip}:{port}"
-            f"?security=reality"
-            f"&sni={sni}"
-            f"&fp={fp}"
-            f"&pbk={quote(pub_key)}"
-            f"&sid={sid}"
-            f"&type=tcp"
-            f"&flow=xtls-rprx-vision"
-            f"&packetEncoding=xudp"
-            f"&encryption=none"
+        return self.handler.generate_link(
+            inbound=inbound,
+            user_id=user['id'],
+            email=email,
+            host=str(self.settings.SERVER_IP),
+            pub_key=self.settings.XRAY_PUB_KEY
         )
-
-        if spx:
-            link += f"&spx={spx}"
-            
-        link += f"#{email}"
-        return link
     
     def get_users_with_stats(self) -> Dict:
         """Retrieves users and merges their traffic stats."""
         config = self.repo.load()
-        inbound = self._find_vless_inbound(config)
+        inbound = self.handler.find_inbound(config)
         users = inbound['settings']['clients']
         
         try:
