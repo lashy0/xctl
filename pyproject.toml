@@ -31,3 +31,4 @@ tag_format = "v$version"
 version_scheme = "pep440"
 version_provider = "scm"
 major_version_zero = true
+update_changelog_on_bump = true
