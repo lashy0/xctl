@@ -70,6 +70,7 @@ class RealityHandler(ProtocolHandler):
             f"&sid={sid}"
             f"&type=tcp"
             f"&flow=xtls-rprx-vision"
+            f"&packetEncoding=xudp"
             f"&encryption=none"
         )
         
