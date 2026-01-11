@@ -1,6 +1,4 @@
-import secrets
 import json
-import urllib.request
 from pathlib import Path
 
 import typer
@@ -10,6 +8,7 @@ from rich.panel import Panel
 
 from ...core.exceptions import XrayError, DockerOperationError
 from ...core.verifier import DomainVerifier
+from ...core.network import NetworkUtils
 from ...core.protocol_factory import get_handler
 from ..utils import resolve_service, resolve_docker, resolve_system_service, console
 
@@ -42,12 +41,13 @@ def initialize_server(
 
     server_ip = ""
     with console.status("[bold blue]Detecting Server IP..."):
-        try:
-            with urllib.request.urlopen('https://api.ipify.org') as response:
-                server_ip = response.read().decode('utf-8')
-        except Exception:
-            console.print("[red]Failed to detect IP automatically.[/]")
-            server_ip = typer.prompt("Enter your Server IP manually")
+        detected_ip = NetworkUtils.get_public_ip()
+    
+    if detected_ip:
+        server_ip = detected_ip
+    else:
+        console.print("[red]Failed to detect IP automatically (all providers unreachable).[/]")
+        server_ip = typer.prompt("Enter your Server IP manually")
     
     console.print(f"Server IP: [green]{server_ip}[/]")
 
